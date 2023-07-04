@@ -4,7 +4,6 @@ import re
 import requests
 from lxml import etree
 from decouple import config
-import schedule
 
 
 LINE_NOTIFY_TOKEN = config('LINE_NOTIFY_TOKEN', cast=str,  default='') 
