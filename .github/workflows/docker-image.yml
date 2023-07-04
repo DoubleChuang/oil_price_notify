@@ -1,0 +1,114 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ main, ]
+  pull_request:
+    branches: [ main, ]
+
+jobs:
+  docker:
+    # runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: doublehub
+      REGISTRY_NAME: oil_price_notify
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.MY_GITHUB_TOKEN }}
+
+#       - name: Lower case
+#         id: string
+#         uses: ASzc/change-string-case-action@v1
+        
+#         with:
+#           string: ${{ env.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
+
+      - name: Create Deploy Message
+        run: |
+          # Grab the branch path from the appropriate (PR vs. push) property on context
+          FULL_PATH_REF="${{ github.event.pull_request.head.ref || github.ref }}"
+          
+          # Strip "refs/heads/" from the start
+          REF=${FULL_PATH_REF#refs\/heads\/}
+          
+          # Set it in env
+          echo "REF=$REF" >> $GITHUB_ENV
+          # Get the short form of the SHA
+          SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha || github.sha }})
+          # Set it in env
+          echo "SHA=$SHA" >> $GITHUB_ENV
+
+          # Yank the commit message from the log, using the SHA
+          COMMIT_MSG=$(git log -n 1 --format=%s $SHA)
+          # Set it in env
+          echo "COMMIT_MSG=$COMMIT_MSG" >> $GITHUB_ENV
+
+          # If it's a PR, use the title, otherwise, use the commit message
+          DEPLOY_MESSAGE="${{ github.event.pull_request.title || env.COMMIT_MSG }}"
+          # Set it in env
+          echo "DEPLOY_MESSAGE=$DEPLOY_MESSAGE" >> $GITHUB_ENV
+          
+          # Change all uppercase to lowercase
+          OWNER=$( echo ${{ github.repository_owner }} | tr '[A-Z]' '[a-z]' )
+          echo "OWNER=$OWNER" >> $GITHUB_ENV
+          
+
+          
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # platforms: linux/amd64
+          push: true
+          # no-cache: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/${{ env.REGISTRY_NAME }}
+            ${{ env.DOCKERHUB_USERNAME }}/${{ env.REGISTRY_NAME }}
+            ghcr.io/${{ env.OWNER }}/${{ env.REGISTRY_NAME }}:${{ env.SHA }}
+            ${{ env.DOCKERHUB_USERNAME }}/${{ env.REGISTRY_NAME }}:${{ env.SHA }}
+#           cache-from: type=local,src=/tmp/.buildx-cache
+#           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+#       - name: Move cache
+#         run: |
+#           rm -rf /tmp/.buildx-cache
+#           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+      - name: LINE Notify Message
+        uses: louis70109/line-notify-action@v0.1.0
+        with:
+          token: ${{ secrets.LINE_TOKEN }}
+          message: |
+            Commit message: ${{ github.event.head_commit.message }}
+            Commit URL: https://github.com/${{ github.repository }}/commit/${{ github.sha }}
+            Status: ${{ job.status }}
